@@ -150,6 +150,14 @@ def call_llm(prompt: str, system_prompt: str, temperature: float = 1.0, max_toke
     log.error("All attempts failed.")
     return None
 
+def clean_text(text: str) -> str:
+    text = re.sub(r'\[.*?\]', '', text)
+    text = re.sub(r'^\d+[\).\s]+', '', text)
+    text = re.sub(r'\*{1,2}(.*?)\*{1,2}', r'\1', text)
+    text = re.sub(r'\(.*?\)', '', text)
+    text = re.sub(r'\s+', ' ', text)
+    return text.strip()
+
 # ---------------------------
 # 🧠 Main pipeline
 # ---------------------------
@@ -252,10 +260,9 @@ def anounce_weather_france(weathers: list[WeatherResult]):
     system_prompt = (
         "Tu es un présentateur météo radio national.\n"
         "Tu fais un bulletin météo pour toute la France.\n"
-        "Tu présentes la météo ville par ville.\n"
         "Style fluide, naturel et dynamique.\n"
-        "Pas d'emoji.\n"
-        "Cite le nom de chaque ville et ses conditions."
+        "Pas d'emoji ni de markdown.\n"
+        "Précise la température en °C et les précipitations en ml."
     )
 
     formatted = ""
@@ -270,7 +277,7 @@ def anounce_weather_france(weathers: list[WeatherResult]):
     prompt = (
         "Voici la météo du jour pour chaque ville :\n\n"
         f"{formatted}\n"
-        "Fais un bulletin météo radio ville par ville, naturel et fluide."
+        "Fais un bulletin météo radio, naturel et fluide."
     )
 
     return call_llm(prompt, system_prompt, temperature=0.2)
@@ -280,10 +287,9 @@ def anounce_weather_france_tomorrow(weathers: list[WeatherResult]):
     system_prompt = (
         "Tu es un présentateur météo radio national.\n"
         "Tu fais les prévisions météo pour demain sur toute la France.\n"
-        "Tu présentes les prévisions ville par ville.\n"
         "Style fluide, naturel et dynamique.\n"
-        "Pas d'emoji.\n"
-        "Cite le nom de chaque ville et ses prévisions."
+        "Pas d'emoji ni de markdown.\n"
+        "Précise la température en °C et les précipitations en ml."
     )
 
     formatted = ""
@@ -299,7 +305,7 @@ def anounce_weather_france_tomorrow(weathers: list[WeatherResult]):
     prompt = (
         "Voici les prévisions météo pour demain, ville par ville :\n\n"
         f"{formatted}\n"
-        "Fais un bulletin météo radio ville par ville, naturel et fluide."
+        "Fais un bulletin météo radio, naturel et fluide."
     )
 
     return call_llm(prompt, system_prompt, temperature=0.2)
@@ -385,7 +391,7 @@ if __name__ == "__main__":
 
     match arg_1:
         case "podcast":
-            content = anounce_podcast(arg_2)
+            content = clean_text(anounce_podcast(arg_2))
             audio_path = "./announce.wav"
             srt_path = "./announce.vtt"
             asyncio.run(generate_audio_and_subs(content, VOICE, audio_path, srt_path))
@@ -395,7 +401,7 @@ if __name__ == "__main__":
             client = OpenMeteoClient()
             weathers = get_france_weather(client)
 
-            content = anounce_weather_france(weathers)
+            content = clean_text(anounce_weather_france(weathers))
             audio_path = "./weather.wav"
             srt_path = "./weather.vtt"
             asyncio.run(generate_audio_and_subs(content, VOICE, audio_path, srt_path))
@@ -405,7 +411,7 @@ if __name__ == "__main__":
             client = OpenMeteoClient()
             weathers = get_france_weather(client)
 
-            content = anounce_weather_france_tomorrow(weathers)
+            content = clean_text(anounce_weather_france_tomorrow(weathers))
             audio_path = "./weather.wav"
             srt_path = "./weather.vtt"
             asyncio.run(generate_audio_and_subs(content, VOICE, audio_path, srt_path))
@@ -413,12 +419,9 @@ if __name__ == "__main__":
 
         case "news":
             rss_url = arg_2
-
-            content = anounce_news(rss_url)
-
+            content = clean_text(anounce_news(rss_url))
             audio_path = "./news.wav"
             srt_path = "./news.vtt"
-
             asyncio.run(generate_audio_and_subs(content, VOICE, audio_path, srt_path))
             log.info("DONE :)")
         
