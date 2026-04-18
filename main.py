@@ -252,162 +252,57 @@ def anounce_weather_france(weathers: list[WeatherResult]):
     system_prompt = (
         "Tu es un présentateur météo radio national.\n"
         "Tu fais un bulletin météo pour toute la France.\n"
-        "Tu regroupes les informations par zones : nord-ouest, nord-est, sud-ouest, sud-est.\n"
+        "Tu présentes la météo ville par ville.\n"
         "Style fluide, naturel et dynamique.\n"
-        "Maximum 5 phrases.\n"
         "Pas d'emoji.\n"
-        "Fais une synthèse, ne liste pas les villes."
+        "Cite le nom de chaque ville et ses conditions."
     )
 
-    zones = {
-        "Nord-Ouest": [],
-        "Nord-Est": [],
-        "Sud-Ouest": [],
-        "Sud-Est": []
-    }
-
+    formatted = ""
     for w in weathers:
         today = w.forecast[0]
-        data = {
-            "city": w.city,
-            "min": today.temp_min,
-            "max": today.temp_max,
-            "rain": today.precipitation_sum,
-            "condition": weather_code_to_text(today.weathercode)
-        }
-
-        city = w.city
-
-        if city in ["Paris", "Lille", "Brest"]:
-            zones["Nord-Ouest"].append(data)
-
-        elif city in ["Strasbourg", "Lyon"]:
-            zones["Nord-Est"].append(data)
-
-        elif city in ["Toulouse", "Bordeaux", "Clermont-Ferrand"]:
-            zones["Sud-Ouest"].append(data)
-
-        elif city in ["Marseille", "Nice", "Montpellier"]:
-            zones["Sud-Est"].append(data)
-
-    def summarize_zone(data_list):
-        if not data_list:
-            return None
-
-        avg_min = sum(d["min"] for d in data_list) / len(data_list)
-        avg_max = sum(d["max"] for d in data_list) / len(data_list)
-        total_rain = sum(d["rain"] for d in data_list)
-
-        return {
-            "min": round(avg_min),
-            "max": round(avg_max),
-            "rain": round(total_rain, 1),
-            "conditions": [d["condition"] for d in data_list]
-        }
-
-    formatted = ""
-
-    for zone_name, data in zones.items():
-        summary = summarize_zone(data)
-        if not summary:
-            continue
-
+        conditions = weather_code_to_text(today.weathercode)
         formatted += (
-            f"{zone_name} : "
-            f"min {summary['min']}°C, max {summary['max']}°C, "
-            f"pluie {summary['rain']} mm, "
-            f"conditions: {', '.join(summary['conditions'])}.\n"
+            f"{w.city} : min {today.temp_min}°C, max {today.temp_max}°C, "
+            f"pluie {today.precipitation_sum} mm, conditions : {conditions}.\n"
         )
 
     prompt = (
-        "Voici un résumé météo par grandes zones en France :\n\n"
+        "Voici la météo du jour pour chaque ville :\n\n"
         f"{formatted}\n"
-        "Fais un bulletin météo radio naturel et synthétique."
+        "Fais un bulletin météo radio ville par ville, naturel et fluide."
     )
 
     return call_llm(prompt, system_prompt, temperature=0.2)
+
 
 def anounce_weather_france_tomorrow(weathers: list[WeatherResult]):
     system_prompt = (
         "Tu es un présentateur météo radio national.\n"
         "Tu fais les prévisions météo pour demain sur toute la France.\n"
-        "Tu regroupes les informations par zones : nord-ouest, nord-est, sud-ouest, sud-est.\n"
+        "Tu présentes les prévisions ville par ville.\n"
         "Style fluide, naturel et dynamique.\n"
-        "Maximum 5 phrases.\n"
         "Pas d'emoji.\n"
-        "Commence par une tendance générale.\n"
-        "Fais une synthèse, ne liste pas les villes."
+        "Cite le nom de chaque ville et ses prévisions."
     )
 
-    zones = {
-        "Nord-Ouest": [],
-        "Nord-Est": [],
-        "Sud-Ouest": [],
-        "Sud-Est": []
-    }
-
+    formatted = ""
     for w in weathers:
         tomorrow = w.forecast[1]
-
-        data = {
-            "city": w.city,
-            "min": tomorrow.temp_min,
-            "max": tomorrow.temp_max,
-            "rain": tomorrow.precipitation_sum,
-            "condition": weather_code_to_text(tomorrow.weathercode)
-        }
-
-        city = w.city
-
-        if city in ["Paris", "Lille", "Brest"]:
-            zones["Nord-Ouest"].append(data)
-
-        elif city in ["Strasbourg", "Lyon"]:
-            zones["Nord-Est"].append(data)
-
-        elif city in ["Toulouse", "Bordeaux", "Clermont-Ferrand"]:
-            zones["Sud-Ouest"].append(data)
-
-        elif city in ["Marseille", "Nice", "Montpellier"]:
-            zones["Sud-Est"].append(data)
-
-    def summarize_zone(data_list):
-        if not data_list:
-            return None
-
-        avg_min = sum(d["min"] for d in data_list) / len(data_list)
-        avg_max = sum(d["max"] for d in data_list) / len(data_list)
-        total_rain = sum(d["rain"] for d in data_list)
-
-        return {
-            "min": round(avg_min),
-            "max": round(avg_max),
-            "rain": round(total_rain, 1),
-            "conditions": list(set(d["condition"] for d in data_list))
-        }
-
-    formatted = ""
-
-    for zone_name, data in zones.items():
-        summary = summarize_zone(data)
-        if not summary:
-            continue
-
+        conditions = weather_code_to_text(tomorrow.weathercode)
         formatted += (
-            f"{zone_name} : "
-            f"min {summary['min']}°C, max {summary['max']}°C, "
-            f"pluie {summary['rain']} mm, "
-            f"conditions: {', '.join(summary['conditions'])}.\n"
+            f"{w.city} : min {tomorrow.temp_min}°C, max {tomorrow.temp_max}°C, "
+            f"pluie {tomorrow.precipitation_sum} mm, "
+            f"vent max {tomorrow.wind_speed_max} km/h, conditions : {conditions}.\n"
         )
 
     prompt = (
-        "Voici les prévisions météo pour demain par grandes zones en France :\n\n"
+        "Voici les prévisions météo pour demain, ville par ville :\n\n"
         f"{formatted}\n"
-        "Fais un bulletin météo radio naturel et synthétique."
+        "Fais un bulletin météo radio ville par ville, naturel et fluide."
     )
 
     return call_llm(prompt, system_prompt, temperature=0.2)
-
 
 def anounce_news(rss_url: str):
     system_prompt = (
