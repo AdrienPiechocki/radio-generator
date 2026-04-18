@@ -323,6 +323,7 @@ def anounce_news(rss_url: str):
         "- Ne fais aucune indication technique ou de réalisation.\n"
         "- N'invente aucune information. Si tu penses qu'une information est éronnée, NE LA CORRIGE PAS.\n"
         "- Répond uniquement avec un texte destiné à être lu à voix haute.\n"
+        "- Tu n'as pas de correspondant ou d'intervennant ; Tu ne dois pas en parler.\n"
         "\n"
         "STYLE :\n"
         "- Clair, factuel, informatif\n"
