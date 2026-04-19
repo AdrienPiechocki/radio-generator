@@ -440,7 +440,7 @@ def anounce_news(rss_url: str):
         "- Entre chaque article d'une même thématique, utilise des connecteurs logiques (ex: 'Toujours à l'international...', 'Dans un autre registre...', 'Par ailleurs...', 'On enchaîne avec...').\n"
         "\n"
         "CITATIONS DE SOURCES :\n"
-        "- Cite les sources journalistiques UNE SEULE FOIS, à la toute fin.\n"
+        "- Cite les sources journalistiques, à la toute fin.\n"
         "- Ne répète jamais la même source deux fois de suite.\n"
         "\n"
         "RÈGLES ABSOLUES :\n"
