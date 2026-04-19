@@ -28,6 +28,9 @@ MODEL = "gemma3n"
 MAX_RETRIES = 3
 VOICE = "fr-FR-HenriNeural"
 
+# Seuil en km/h à partir duquel le vent est mentionné
+WIND_THRESHOLD_KMH = 50
+
 
 # ---------------------------
 # FETCH RSS
@@ -311,10 +314,15 @@ def anounce_weather(weather: WeatherResult):
 
     conditions = weather_code_to_text(today.weathercode)
 
+    wind_line = ""
+    if current.windspeed >= WIND_THRESHOLD_KMH:
+        wind_line = f"Vent fort : {round(current.windspeed)} km/h.\n"
+
     prompt = (
         f"Météo à {weather.city} aujourd'hui.\n"
-        f"Actuellement : {current.temperature}°C, vent {current.windspeed} km/h.\n"
-        f"Prévisions : min {today.temp_min}°C, max {today.temp_max}°C.\n"
+        f"Actuellement : {round(current.temperature)}°C.\n"
+        f"{wind_line}"
+        f"Prévisions : min {round(today.temp_min)}°C, max {round(today.temp_max)}°C.\n"
         f"Précipitations prévues : {today.precipitation_sum} mm.\n"
         f"Conditions : {conditions}."
     )
@@ -334,11 +342,15 @@ def anounce_weather_tomorrow(weather: WeatherResult):
 
     conditions = weather_code_to_text(tomorrow.weathercode)
 
+    wind_line = ""
+    if tomorrow.wind_speed_max >= WIND_THRESHOLD_KMH:
+        wind_line = f"Vent fort attendu : jusqu'à {round(tomorrow.wind_speed_max)} km/h.\n"
+
     prompt = (
         f"Météo pour demain à {weather.city}.\n"
-        f"Températures : min {tomorrow.temp_min}°C, max {tomorrow.temp_max}°C.\n"
+        f"Températures : min {round(tomorrow.temp_min)}°C, max {round(tomorrow.temp_max)}°C.\n"
         f"Pluie prévue : {tomorrow.precipitation_sum} mm.\n"
-        f"Vent maximum : {tomorrow.wind_speed_max} km/h.\n"
+        f"{wind_line}"
         f"Conditions : {conditions}."
     )
 
@@ -369,16 +381,18 @@ def anounce_weather_france(weathers: list[WeatherResult]):
         "Tu fais un bulletin météo pour toute la France.\n"
         "Style fluide, naturel et dynamique.\n"
         "Pas d'emoji ni de markdown.\n"
-        "Précise la température en °C et les précipitations en ml."
+        "Précise la température en °C et les précipitations en ml.\n"
+        "Ne mentionne le vent que s'il est fort (indiqué explicitement dans les données)."
     )
 
     formatted = ""
     for w in weathers:
         today = w.forecast[0]
         conditions = weather_code_to_text(today.weathercode)
+        wind_note = f", vent fort {round(today.wind_speed_max)} km/h" if today.wind_speed_max >= WIND_THRESHOLD_KMH else ""
         formatted += (
-            f"{w.city} : min {today.temp_min}°C, max {today.temp_max}°C, "
-            f"pluie {today.precipitation_sum} mm, conditions : {conditions}.\n"
+            f"{w.city} : min {round(today.temp_min)}°C, max {round(today.temp_max)}°C, "
+            f"pluie {today.precipitation_sum} mm, conditions : {conditions}{wind_note}.\n"
         )
 
     prompt = (
@@ -396,17 +410,19 @@ def anounce_weather_france_tomorrow(weathers: list[WeatherResult]):
         "Tu fais les prévisions météo pour demain sur toute la France.\n"
         "Style fluide, naturel et dynamique.\n"
         "Pas d'emoji ni de markdown.\n"
-        "Précise la température en °C et les précipitations en ml."
+        "Précise la température en °C et les précipitations en ml.\n"
+        "Ne mentionne le vent que s'il est fort (indiqué explicitement dans les données)."
     )
 
     formatted = ""
     for w in weathers:
         tomorrow = w.forecast[1]
         conditions = weather_code_to_text(tomorrow.weathercode)
+        wind_note = f", vent fort {round(tomorrow.wind_speed_max)} km/h" if tomorrow.wind_speed_max >= WIND_THRESHOLD_KMH else ""
         formatted += (
-            f"{w.city} : min {tomorrow.temp_min}°C, max {tomorrow.temp_max}°C, "
-            f"pluie {tomorrow.precipitation_sum} mm, "
-            f"vent max {tomorrow.wind_speed_max} km/h, conditions : {conditions}.\n"
+            f"{w.city} : min {round(tomorrow.temp_min)}°C, max {round(tomorrow.temp_max)}°C, "
+            f"pluie {tomorrow.precipitation_sum} mm"
+            f"{wind_note}, conditions : {conditions}.\n"
         )
 
     prompt = (
