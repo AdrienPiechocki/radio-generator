@@ -10,6 +10,11 @@ import logging
 from typing import Optional
 from weather import OpenMeteoClient, WeatherResult
 import feedparser
+from datetime import datetime
+
+now = datetime.now()
+date = now.strftime("%A %d %B %Y")
+hour = now.strftime("%Hh")
 
 # ---------------------------
 # 🪵 Logging
@@ -319,6 +324,7 @@ def anounce_weather(weather: WeatherResult):
         wind_line = f"Vent fort : {round(current.windspeed)} km/h.\n"
 
     prompt = (
+        f"Nous sommes le {date}. Il est {hour}\n"
         f"Météo à {weather.city} aujourd'hui.\n"
         f"Actuellement : {round(current.temperature)}°C.\n"
         f"{wind_line}"
@@ -347,6 +353,7 @@ def anounce_weather_tomorrow(weather: WeatherResult):
         wind_line = f"Vent fort attendu : jusqu'à {round(tomorrow.wind_speed_max)} km/h.\n"
 
     prompt = (
+        f"Nous sommes le {date}. Il est {hour}\n"
         f"Météo pour demain à {weather.city}.\n"
         f"Températures : min {round(tomorrow.temp_min)}°C, max {round(tomorrow.temp_max)}°C.\n"
         f"Pluie prévue : {tomorrow.precipitation_sum} mm.\n"
@@ -396,6 +403,7 @@ def anounce_weather_france(weathers: list[WeatherResult]):
         )
 
     prompt = (
+        f"Nous sommes le {date}. Il est {hour}\n"
         "Voici la météo du jour pour chaque ville :\n\n"
         f"{formatted}\n"
         "Fais un bulletin météo radio, naturel et fluide."
@@ -426,6 +434,7 @@ def anounce_weather_france_tomorrow(weathers: list[WeatherResult]):
         )
 
     prompt = (
+        f"Nous sommes le {date}. Il est {hour}\n"
         "Voici les prévisions météo pour demain, ville par ville :\n\n"
         f"{formatted}\n"
         "Fais un bulletin météo radio, naturel et fluide."
@@ -514,6 +523,7 @@ def anounce_news(rss_url: str):
         )
 
     prompt = (
+        f"Nous sommes le {date}. Il est {hour}\n"
         "Voici les informations phares du moment :\n\n"
         f"{formatted_news}"
         "\n"
