@@ -39,6 +39,11 @@ def clean_html(text):
 import json
 
 def select_top_news_llm(articles: list[dict], top_k: int = 10) -> list[dict]:
+    # ✅ Calculer le quota par source
+    sources = list({a["source_name"] for a in articles})
+    nb_sources = len(sources)
+    min_per_source = max(1, top_k // nb_sources)  # au moins 1 article par source
+
     system_prompt = (
         "Tu es un système de sélection d'articles.\n"
         "Tu réponds UNIQUEMENT avec un tableau JSON brut, sans aucun texte avant ou après.\n"
@@ -51,13 +56,15 @@ def select_top_news_llm(articles: list[dict], top_k: int = 10) -> list[dict]:
     formatted = ""
     for i, art in enumerate(articles):
         formatted += (
-            f"Article {i}: {art['title']}\n"
+            f"Article {i} [{art['source_name']}]: {art['title']}\n"
             f"Résumé: {art['summary'][:300]}\n\n"
         )
 
     prompt = (
-        f"Sélectionne les {top_k} articles les plus importants parmi cette liste.\n"
-        f"Critères : actualité nationale, internationale, politique, crise, économie.\n\n"
+        f"Sélectionne exactement {top_k} articles les plus importants parmi cette liste.\n"
+        f"Critères : actualité nationale, internationale, politique, crise, économie.\n"
+        f"IMPORTANT : assure-toi de sélectionner AU MINIMUM {min_per_source} article(s) par source "
+        f"pour garantir une représentation équilibrée entre : {', '.join(sources)}.\n\n"
         f"{formatted}\n"
         f"Réponds UNIQUEMENT avec le JSON. Exemple : [{{\"index\": 0}}, {{\"index\": 2}}]"
     )
@@ -69,19 +76,29 @@ def select_top_news_llm(articles: list[dict], top_k: int = 10) -> list[dict]:
         return articles[:top_k]
 
     indexes = parse_indexes(response, len(articles))
-    
+
     if not indexes:
         log.warning(f"Aucun index extrait | Réponse brute : {response[:300]}")
         return articles[:top_k]
 
     selected = [articles[i] for i in indexes if 0 <= i < len(articles)]
 
+    # ✅ Fallback : compléter si une source est absente
+    selected_sources = {a["source_name"] for a in selected}
+    missing_sources = set(sources) - selected_sources
+
+    for missing in missing_sources:
+        candidates = [a for a in articles if a["source_name"] == missing and a not in selected]
+        if candidates:
+            selected.append(candidates[0])
+            log.info(f"Ajout forcé d'un article de '{missing}' pour équilibrage")
+
     if not selected:
         log.warning("Indexes hors limites, fallback")
         return articles[:top_k]
 
-    # log.info(f"Sélection OK ({len(selected[:top_k])}) : {[a['title'] for a in selected[:top_k]]}")
     return selected[:top_k]
+
 
 def fetch_and_rank_news(rss_urls: list[str], max_articles: int = 20):
     all_articles = []
@@ -92,7 +109,7 @@ def fetch_and_rank_news(rss_urls: list[str], max_articles: int = 20):
         if not feed.entries:
             continue  # skip les flux vides plutôt que crash
         
-        feed_title = feed.feed.get("title", "") or extract_source_name(url)
+        feed_title = extract_source_name(url)
 
         for entry in feed.entries[:max_articles]:
             title = entry.get("title", "")
@@ -122,6 +139,8 @@ def fetch_and_rank_news(rss_urls: list[str], max_articles: int = 20):
             seen_titles.add(title_key)
             unique_articles.append(art)
     all_articles = unique_articles
+
+    random.shuffle(all_articles)
 
     # 🧠 sélection intelligente TOP 10 par LLM
     top_articles = select_top_news_llm(all_articles, top_k=10)
@@ -440,7 +459,7 @@ def anounce_news(rss_url: str):
         "- Entre chaque article d'une même thématique, utilise des connecteurs logiques (ex: 'Toujours à l'international...', 'Dans un autre registre...', 'Par ailleurs...', 'On enchaîne avec...').\n"
         "\n"
         "CITATIONS DE SOURCES :\n"
-        "- Cite les sources journalistiques, à la toute fin.\n"
+        "- Cite toutes les sources journalistiques à la fin.\n"
         "- Ne répète jamais la même source deux fois de suite.\n"
         "\n"
         "RÈGLES ABSOLUES :\n"
@@ -471,7 +490,7 @@ def anounce_news(rss_url: str):
     # Construire le contexte avec la source pour chaque article
     formatted_news = ""
     for art in articles:
-        source_name = art.get("source_name") or extract_source_name(art['source'])
+        source_name = art.get("source_name")
         formatted_news += (
             f"Source : {source_name}\n"
             f"Titre : {art['title']}\n"
@@ -491,7 +510,7 @@ def anounce_news(rss_url: str):
         "Regroupe les articles par thématiques avec des transitions naturelles.\n"
         "Pour chaque article : développe avec TOUS les détails présents dans le résumé.\n"
         "Prévoie environ 30 secondes de temps de parole par information.\n"
-        "Cite les sources journalistiques à la fin.\n"
+        "Cite toutes les sources journalistiques à la fin.\n"
         "PAS de numérotation, PAS de titres, PAS de markdown.\n"
     )
 
