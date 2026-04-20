@@ -70,9 +70,10 @@ def load_history() -> tuple[list[str], list[str]]:
         return [], []
 
 def save_history(history: list[str]) -> None:
-    """Persist the last HISTORY_SIZE topics to disk."""
+    """Persist the last HISTORY_SIZE topics to disk, avoiding duplicates."""
     today = datetime.now().strftime("%Y-%m-%d")
-    # Charger l'existant pour merger
+    
+    # 1. Charger l'existant
     try:
         with open(HISTORY_FILE, "r", encoding="utf-8") as f:
             existing = json.load(f)
@@ -81,20 +82,37 @@ def save_history(history: list[str]) -> None:
     except (FileNotFoundError, json.JSONDecodeError):
         existing = []
 
-    # Convertir les anciens titres (format str) en dict si nécessaire
+    # 2. Normaliser l'existant (gestion des anciens formats str -> dict)
+    # Et extraire un set des titres déjà présents pour une recherche rapide
     normalized = []
+    existing_titles_set = set()
+    
     for entry in existing:
         if isinstance(entry, str):
-            normalized.append({"title": entry, "date": "1970-01-01"})
+            title = entry
+            entry_dict = {"title": title, "date": "1970-01-01"}
         else:
-            normalized.append(entry)
+            title = entry.get("title", "")
+            entry_dict = entry
+            
+        normalized.append(entry_dict)
+        existing_titles_set.add(title)
 
-    # Ajouter les nouveaux titres avec la date du jour
+    # 3. Ajouter UNIQUEMENT les nouveaux titres qui ne sont pas dans le set
+    added_count = 0
     for title in history:
-        normalized.append({"title": title, "date": today})
+        if title not in existing_titles_set:
+            normalized.append({"title": title, "date": today})
+            existing_titles_set.add(title) # Évite les doublons au sein du même batch
+            added_count += 1
 
-    with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-        json.dump(normalized[-HISTORY_SIZE:], f, ensure_ascii=False, indent=2)
+    if added_count > 0:
+        log.info(f"Historique : {added_count} nouveaux titres ajoutés.")
+        # 4. Sauvegarder les derniers HISTORY_SIZE
+        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(normalized[-HISTORY_SIZE:], f, ensure_ascii=False, indent=2)
+    else:
+        log.info("Historique : aucun nouveau titre à sauvegarder.")
 
 # ---------------------------
 # FETCH RSS
