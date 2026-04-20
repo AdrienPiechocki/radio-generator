@@ -10,7 +10,7 @@ import logging
 from typing import Optional
 from weather import OpenMeteoClient, WeatherResult
 import feedparser
-from datetime import datetime
+from datetime import datetime, timedelta
 from difflib import SequenceMatcher
 import locale
 
@@ -18,6 +18,8 @@ locale.setlocale(locale.LC_TIME, 'fr_FR.UTF-8')
 
 now = datetime.now()
 date = now.strftime("%A %d %B %Y")
+if now.minute >= 30:
+    now = now + timedelta(hours=1)
 hour = now.strftime("%Hh")
 
 # ---------------------------
@@ -822,3 +824,4 @@ if __name__ == "__main__":
         
         case _:
             pass
+
