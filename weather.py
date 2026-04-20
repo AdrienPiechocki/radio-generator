@@ -1,7 +1,7 @@
 import requests
 from dataclasses import dataclass
 from typing import List, Optional
-
+from datetime import datetime
 
 # =========================
 # MODELES (Dataclasses)
@@ -119,7 +119,7 @@ class OpenMeteoClient:
         daily = weather_data["daily"]
         forecast = [
             DailyForecast(
-                date=daily["time"][i],
+                date=datetime.strptime(daily["time"][i], "%Y-%m-%d"), 
                 temp_max=daily["temperature_2m_max"][i],
                 temp_min=daily["temperature_2m_min"][i],
                 precipitation_sum=daily["precipitation_sum"][i],

@@ -161,3 +161,4 @@ cython_debug/
 
 *.wav
 *.vtt
+.news_history.json

@@ -11,6 +11,7 @@ from typing import Optional
 from weather import OpenMeteoClient, WeatherResult
 import feedparser
 from datetime import datetime
+from difflib import SequenceMatcher
 
 now = datetime.now()
 date = now.strftime("%A %d %B %Y")
@@ -35,7 +36,27 @@ VOICE = "fr-FR-HenriNeural"
 
 # Seuil en km/h à partir duquel le vent est mentionné
 WIND_THRESHOLD_KMH = 50
+# Garder les 30 derniers articles pour couvrir environ 3 jours de news
+HISTORY_SIZE = 30 
+SIMILARITY_THRESHOLD = 0.6
+HISTORY_FILE = os.path.join(os.path.dirname(__file__), ".news_history.json")
 
+# ---------------------------
+# 📋 History persistence
+# ---------------------------
+def load_history() -> list[str]:
+    """Load the sliding window of recently generated topics from disk."""
+    try:
+        with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+def save_history(history: list[str]) -> None:
+    """Persist the last HISTORY_SIZE topics to disk."""
+    with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+        json.dump(history[-HISTORY_SIZE:], f, ensure_ascii=False, indent=2)
 
 # ---------------------------
 # FETCH RSS
@@ -46,67 +67,79 @@ def clean_html(text):
 
 import json
 
-def select_top_news_llm(articles: list[dict], top_k: int = 10) -> list[dict]:
-    # ✅ Calculer le quota par source
-    sources = list({a["source_name"] for a in articles})
-    nb_sources = len(sources)
-    min_per_source = max(1, top_k // nb_sources)  # au moins 1 article par source
+def is_similar(a: str, b: str) -> bool:
+    """Calcule le ratio de similarité entre deux chaînes."""
+    return SequenceMatcher(None, a.lower(), b.lower()).ratio() > SIMILARITY_THRESHOLD
+
+def select_top_news_llm(articles: list[dict], top_k: int = 10, history: Optional[list[str]] = None) -> list[dict]:
+    history = history or []
+    filtered_articles = []
+
+    # 1. FILTRAGE PAR SIMILARITÉ
+    for art in articles:
+        is_duplicate = False
+        title_to_check = art['title']
+        
+        # Vérifier contre l'historique des jours précédents
+        for past_title in history:
+            if is_similar(title_to_check, past_title):
+                is_duplicate = True
+                log.info(f"Filtre historique (similaire) : {title_to_check}")
+                break
+        
+        # Vérifier aussi contre les articles déjà acceptés dans ce batch 
+        # (pour éviter les doublons entre différentes sources le même jour)
+        if not is_duplicate:
+            for accepted in filtered_articles:
+                if is_similar(title_to_check, accepted['title']):
+                    is_duplicate = True
+                    log.info(f"Filtre doublon source : {title_to_check}")
+                    break
+        
+        if not is_duplicate:
+            filtered_articles.append(art)
+
+    # Sécurité : si on a trop filtré, on garde au moins ce qu'on a
+    if len(filtered_articles) < top_k:
+        log.warning("Peu d'articles après filtrage de similarité.")
+        if not filtered_articles: filtered_articles = articles
+
+    # 2. PRÉPARATION DU PROMPT (Identique à votre logique précédente)
+    sources = list({a["source_name"] for a in filtered_articles})
+    min_per_source = max(1, top_k // len(sources)) if sources else 1
 
     system_prompt = (
         "Tu es un système de sélection d'articles.\n"
         "Tu réponds UNIQUEMENT avec un tableau JSON brut, sans aucun texte avant ou après.\n"
-        "AUCUN commentaire, AUCUN markdown, AUCUNE explication.\n"
-        "Commence ta réponse directement par [ et termine par ].\n\n"
-        "Format STRICT :\n"
-        "[{\"index\": 0}, {\"index\": 3}, {\"index\": 5}]"
+        "Format STRICT : [{\"index\": 0}, {\"index\": 3}]"
     )
 
     formatted = ""
-    for i, art in enumerate(articles):
-        formatted += (
-            f"Article {i} [{art['source_name']}]: {art['title']}\n"
-            f"Résumé: {art['summary'][:300]}\n\n"
-        )
+    for i, art in enumerate(filtered_articles):
+        formatted += f"Article {i} [{art['source_name']}]: {art['title']}\n"
 
     prompt = (
-        f"Sélectionne exactement {top_k} articles les plus importants parmi cette liste.\n"
-        f"Critères : actualité nationale, internationale, politique, crise, économie.\n"
-        f"IMPORTANT : assure-toi de sélectionner AU MINIMUM {min_per_source} article(s) par source "
-        f"pour garantir une représentation équilibrée entre : {', '.join(sources)}.\n\n"
-        f"{formatted}\n"
-        f"Réponds UNIQUEMENT avec le JSON. Exemple : [{{\"index\": 0}}, {{\"index\": 2}}]"
+        f"Sélectionne exactement {top_k} articles parmi cette liste.\n"
+        f"Critères : actualité nationale, internationale, politique.\n"
+        f"Assure-toi d'avoir au moins {min_per_source} article(s) par source : {', '.join(sources)}.\n\n"
+        f"{formatted}"
     )
 
-    response = call_llm_json(prompt, system_prompt, temperature=0.1, max_tokens=800)
-
+    response = call_llm_json(prompt, system_prompt)
+    
     if not response:
-        log.warning("LLM vide, fallback")
-        return articles[:top_k]
+        return filtered_articles[:top_k]
 
-    indexes = parse_indexes(response, len(articles))
+    indexes = parse_indexes(response, len(filtered_articles))
+    selected = [filtered_articles[i] for i in indexes if 0 <= i < len(filtered_articles)]
 
-    if not indexes:
-        log.warning(f"Aucun index extrait | Réponse brute : {response[:300]}")
-        return articles[:top_k]
-
-    selected = [articles[i] for i in indexes if 0 <= i < len(articles)]
-
-    # ✅ Fallback : compléter si une source est absente
+    # Compléter si nécessaire (représentation équilibrée)
     selected_sources = {a["source_name"] for a in selected}
-    missing_sources = set(sources) - selected_sources
-
-    for missing in missing_sources:
-        candidates = [a for a in articles if a["source_name"] == missing and a not in selected]
-        if candidates:
-            selected.append(candidates[0])
-            log.info(f"Ajout forcé d'un article de '{missing}' pour équilibrage")
-
-    if not selected:
-        log.warning("Indexes hors limites, fallback")
-        return articles[:top_k]
+    for s in set(sources) - selected_sources:
+        candidates = [a for a in filtered_articles if a["source_name"] == s and a not in selected]
+        if candidates: selected.append(candidates[0])
 
     return selected[:top_k]
-
 
 def fetch_and_rank_news(rss_urls: list[str], max_articles: int = 20):
     all_articles = []
@@ -442,6 +475,80 @@ def anounce_weather_france_tomorrow(weathers: list[WeatherResult]):
 
     return call_llm(prompt, system_prompt, temperature=0.2)
 
+def announce_weather_week(weather: WeatherResult):
+    system_prompt = (
+        "Tu es un présentateur météo radio.\n"
+        "Ton rôle est de transformer des données brutes en un bulletin de tendances hebdomadaire (5 jours).\n\n"
+        "DIRECTIVES DE RÉDACTION :\n"
+        "1. ANALYSE GLOBALE : Commence par la tendance générale (ex: 'Une semaine marquée par le retour du soleil' ou 'Une alternance de pluie et d'éclaircies').\n"
+        "2. REGROUPEMENT : Ne fais pas une liste 'Lundi... Mardi... Mercredi...'. Regroupe les jours qui se ressemblent (ex: 'Le début de semaine restera sec, mais une perturbation arrive dès jeudi').\n"
+        "3. CHIFFRES CLÉS : Cite les températures minimales et maximales les plus marquantes.\n"
+        "4. STYLE : Fluide, professionnel, sans aucun markdown (pas de **, ##, tirets) ni emojis.\n"
+        "5. SYNTHÈSE : Le bulletin doit durer environ 45 secondes à l'oral."
+    )
+
+    # Préparation des données textuelles pour le LLM
+    data_points = []
+    for i in range(5):
+        day = weather.forecast[i]
+        d_name = day.date.strftime("%A %d %B")
+        cond = weather_code_to_text(day.weathercode)
+        wind_note = f", vent fort {round(day.wind_speed_max)} km/h" if day.wind_speed_max >= WIND_THRESHOLD_KMH else ""
+        data_points.append(
+            f"{d_name} : {cond}, Températures de {round(day.temp_min)} à {round(day.temp_max)}°C, Pluie : {day.precipitation_sum}mm{wind_note}."
+        )
+    
+    forecast_blob = "\n".join(data_points)
+
+    prompt = (
+        f"Nous sommes le {date}. Voici les prévisions détaillées pour {weather.city} sur 5 jours :\n\n"
+        f"{forecast_blob}\n\n"
+        "Rédige maintenant le bulletin radio. Sois précis sur l'évolution du temps. "
+        "N'oublie pas de conclure sur l'ambiance météo de la fin de semaine."
+    )
+
+    return call_llm(prompt, system_prompt, temperature=0.2)
+
+def announce_weather_france_week(weathers: list[WeatherResult]):
+    regions_map = {
+        "Lille": "Nord", "Paris": "Bassin Parisien", "Strasbourg": "Est", 
+        "Lyon": "Centre-Est", "Brest": "Bretagne", "Clermont-Ferrand": "Massif Central",
+        "Bordeaux": "Sud-Ouest", "Toulouse": "Sud-Ouest", 
+        "Marseille": "Sud-Est", "Nice": "Sud-Est", "Montpellier": "Sud-Est"
+    }
+
+    system_prompt = (
+        "Tu es un présentateur météo radio national.\n"
+        "Ton rôle est de transformer des données brutes en un bulletin de tendances hebdomadaire (5 jours).\n\n"
+        "DIRECTIVES DE RÉDACTION :\n"
+        "1. ANALYSE GLOBALE : Commence par la tendance générale (ex: 'Une semaine marquée par le retour du soleil' ou 'Une alternance de pluie et d'éclaircies').\n"
+        "2. REGROUPEMENT : Ne fais pas une liste 'Lundi... Mardi... Mercredi...'. Regroupe les jours qui se ressemblent (ex: 'Le début de semaine restera sec, mais une perturbation arrive dès jeudi').\n"
+        "3. CHIFFRES CLÉS : Cite les températures minimales et maximales les plus marquantes.\n"
+        "4. STYLE : Fluide, professionnel, sans aucun markdown (pas de **, ##, tirets) ni emojis.\n"
+    )
+
+    global_forecast_data = ""
+    for i in range(5):
+        day_date = weathers[0].forecast[i].date.strftime("%A %d %B")
+        day_details = f"--- {day_date} ---\n"
+        # On regroupe les villes par région dans le texte source
+        for region_name in ["Nord", "Bassin Parisien", "Bretagne", "Est", "Centre-Est", "Massif Central", "Sud-Ouest", "Sud-Est"]:
+            cities_in_region = [w for w in weathers if regions_map.get(w.city) == region_name]
+            for w in cities_in_region:
+                day = w.forecast[i]
+                wind_note = f", vent fort {round(day.wind_speed_max)} km/h" if day.wind_speed_max >= WIND_THRESHOLD_KMH else ""
+                day_details += f"[{region_name}] {w.city}: {weather_code_to_text(day.weathercode)}, de {round(day.temp_min)}°C à {round(day.temp_max)}°C, {round(day.precipitation_sum)}mm de précipitation{wind_note}\n"
+        global_forecast_data += day_details + "\n"
+    
+    prompt = (
+        f"DONNÉES BRUTES PAR JOUR :\n{global_forecast_data}\n\n"
+        f"CONSIGNE : Donne le bulletin météo d'aujourd'hui et des 5 prochains jours. "
+        f"Nous sommes le {date}, il est {hour}."
+    )
+
+    # Température très basse (0.1) pour éviter les répétitions et les erreurs
+    return call_llm(prompt, system_prompt, temperature=0.2)
+
 def extract_source_name(url: str) -> str:
     """Extrait un nom de média lisible depuis une URL de flux RSS."""
     known_sources = {
@@ -504,17 +611,61 @@ def anounce_news(rss_url: str):
         "- Tu n'as pas de correspondant ou d'intervenant, ne pas en parler.\n"
         "- Réponds uniquement avec le texte qui sera lu par la synthèse vocale.\n"
     )
-
+    all_articles = []
     urls = rss_url.split()
-    try:
-        articles = fetch_and_rank_news(urls)
-    except Exception as e:
-        log.error(f"Erreur RSS : {e}")
+    for url in urls:
+        try:
+            feed = feedparser.parse(url)
+            source_name = extract_source_name(url)
+            for entry in feed.entries[:20]:
+                all_articles.append({
+                    "title": entry.get("title", ""),
+                    "summary": clean_html(entry.get("summary", "") or entry.get("description", "")),
+                    "source_name": source_name
+                })
+        except Exception as e:
+            log.warning(f"Erreur sur le flux {url}: {e}")
+
+    if not all_articles:
+        log.error("Aucun article récupéré.")
         return None
+
+    history = load_history()
+    filtered_articles = []
+
+    for art in all_articles:
+        is_duplicate = False
+        # Comparaison avec les jours précédents
+        for past_title in history:
+            if is_similar(art['title'], past_title):
+                is_duplicate = True
+                break
+        
+        # Comparaison avec les articles déjà retenus dans ce cycle (doublons inter-sources)
+        if not is_duplicate:
+            for accepted in filtered_articles:
+                if is_similar(art['title'], accepted['title']):
+                    is_duplicate = True
+                    break
+        
+        if not is_duplicate:
+            filtered_articles.append(art)
+
+    # 3. Sélection finale par le LLM (Top 10)
+    # On passe les articles filtrés à la fonction de sélection existante
+    selected_articles = select_top_news_llm(filtered_articles, top_k=10)
+
+    if not selected_articles:
+        log.warning("Aucune nouvelle information après filtrage.")
+        return None
+
+    # Mise à jour de l'historique avec les titres sélectionnés
+    new_titles = [a['title'] for a in selected_articles]
+    save_history(history + new_titles)
 
     # Construire le contexte avec la source pour chaque article
     formatted_news = ""
-    for art in articles:
+    for art in selected_articles:
         source_name = art.get("source_name")
         formatted_news += (
             f"Source : {source_name}\n"
@@ -578,10 +729,10 @@ async def generate_audio_and_subs(text, voice, audio_path, srt_path):
 # ---------------------------
 if __name__ == "__main__":
     arg_1 = sys.argv[1]
-    arg_2 = sys.argv[2]
 
     match arg_1:
         case "podcast":
+            arg_2 = sys.argv[2]
             content = clean_text(anounce_podcast(arg_2))
             audio_path = "./announce.wav"
             srt_path = "./announce.vtt"
@@ -608,7 +759,18 @@ if __name__ == "__main__":
             asyncio.run(generate_audio_and_subs(content, VOICE, audio_path, srt_path))
             log.info("DONE :)")
 
+        case "meteo_semaine":
+            client = OpenMeteoClient()
+            weathers = get_france_weather(client)
+
+            content = clean_text(announce_weather_france_week(weathers))
+            audio_path = "./weather.wav"
+            srt_path = "./weather.vtt"
+            asyncio.run(generate_audio_and_subs(content, VOICE, audio_path, srt_path))
+            log.info("DONE :)")
+
         case "meteo_ville":
+            arg_2 = sys.argv[2]
             client = OpenMeteoClient()
             weathers = client.get_weather_by_city(arg_2)
 
@@ -619,6 +781,7 @@ if __name__ == "__main__":
             log.info("DONE :)")
         
         case "meteo_ville_demain":
+            arg_2 = sys.argv[2]
             client = OpenMeteoClient()
             weathers = client.get_weather_by_city(arg_2)
 
@@ -628,7 +791,19 @@ if __name__ == "__main__":
             asyncio.run(generate_audio_and_subs(content, VOICE, audio_path, srt_path))
             log.info("DONE :)")
 
+        case "meteo_ville_semaine":
+            arg_2 = sys.argv[2]
+            client = OpenMeteoClient()
+            weathers = client.get_weather_by_city(arg_2)
+
+            content = clean_text(announce_weather_week(weathers))
+            audio_path = "./weather.wav"
+            srt_path = "./weather.vtt"
+            asyncio.run(generate_audio_and_subs(content, VOICE, audio_path, srt_path))
+            log.info(f"DONE :)")  
+
         case "news":
+            arg_2 = sys.argv[2]
             rss_url = arg_2
             content = clean_text(anounce_news(rss_url))
             audio_path = "./news.wav"
