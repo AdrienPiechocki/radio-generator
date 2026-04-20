@@ -44,19 +44,57 @@ HISTORY_FILE = os.path.join(os.path.dirname(__file__), ".news_history.json")
 # ---------------------------
 # 📋 History persistence
 # ---------------------------
-def load_history() -> list[str]:
-    """Load the sliding window of recently generated topics from disk."""
+def load_history() -> tuple[list[str], list[str]]:
+    """
+    Retourne (titres_anciens, titres_du_jour).
+    titres_anciens : hier ou avant → utilisés pour filtre de similarité
+    titres_du_jour : aujourd'hui → utilisés uniquement pour filtre de doublon exact
+    """
+    today = datetime.now().strftime("%Y-%m-%d")
     try:
         with open(HISTORY_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-        return data if isinstance(data, list) else []
+        if not isinstance(data, list):
+            return [], []
+        old, today_titles = [], []
+        for entry in data:
+            if isinstance(entry, dict):
+                if entry.get("date", "1970-01-01") < today:
+                    old.append(entry["title"])
+                else:
+                    today_titles.append(entry["title"])
+            else:
+                old.append(entry)  # anciens formats → traités comme anciens
+        return old, today_titles
     except (FileNotFoundError, json.JSONDecodeError):
-        return []
+        return [], []
 
 def save_history(history: list[str]) -> None:
     """Persist the last HISTORY_SIZE topics to disk."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    # Charger l'existant pour merger
+    try:
+        with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+            existing = json.load(f)
+        if not isinstance(existing, list):
+            existing = []
+    except (FileNotFoundError, json.JSONDecodeError):
+        existing = []
+
+    # Convertir les anciens titres (format str) en dict si nécessaire
+    normalized = []
+    for entry in existing:
+        if isinstance(entry, str):
+            normalized.append({"title": entry, "date": "1970-01-01"})
+        else:
+            normalized.append(entry)
+
+    # Ajouter les nouveaux titres avec la date du jour
+    for title in history:
+        normalized.append({"title": title, "date": today})
+
     with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-        json.dump(history[-HISTORY_SIZE:], f, ensure_ascii=False, indent=2)
+        json.dump(normalized[-HISTORY_SIZE:], f, ensure_ascii=False, indent=2)
 
 # ---------------------------
 # FETCH RSS
@@ -71,84 +109,68 @@ def is_similar(a: str, b: str) -> bool:
     """Calcule le ratio de similarité entre deux chaînes."""
     return SequenceMatcher(None, a.lower(), b.lower()).ratio() > SIMILARITY_THRESHOLD
 
-def select_top_news_llm(articles: list[dict], top_k: int = 10, history: Optional[list[str]] = None) -> list[dict]:
+def select_top_news(articles: list[dict], top_k: int = 6, history: Optional[list[str]] = None):
     history = history or []
-    filtered_articles = []
 
-    # 1. FILTRAGE PAR SIMILARITÉ
+    # 1. Filtrage similarité contre l'historique
+    filtered_articles = []
     for art in articles:
         is_duplicate = False
         title_to_check = art['title']
-        
-        # Vérifier contre l'historique des jours précédents
+
         for past_title in history:
             if is_similar(title_to_check, past_title):
                 is_duplicate = True
-                log.info(f"Filtre historique (similaire) : {title_to_check}")
+                log.info(f"Filtre historique : {title_to_check} -> {past_title}")
                 break
-        
-        # Vérifier aussi contre les articles déjà acceptés dans ce batch 
-        # (pour éviter les doublons entre différentes sources le même jour)
+
         if not is_duplicate:
             for accepted in filtered_articles:
                 if is_similar(title_to_check, accepted['title']):
                     is_duplicate = True
-                    log.info(f"Filtre doublon source : {title_to_check}")
+                    log.info(f"Filtre doublon batch : {title_to_check} -> {accepted['title']}")
                     break
-        
+
         if not is_duplicate:
             filtered_articles.append(art)
 
-    # Sécurité : si on a trop filtré, on garde au moins ce qu'on a
-    if len(filtered_articles) < top_k:
-        log.warning("Peu d'articles après filtrage de similarité.")
-        if not filtered_articles: filtered_articles = articles
+    if not filtered_articles:
+        log.warning("Tous les articles filtrés, on repart des originaux.")
+        filtered_articles = articles[:]
 
-    # 2. PRÉPARATION DU PROMPT (Identique à votre logique précédente)
+    # 2. Sélection équilibrée par source
     sources = list({a["source_name"] for a in filtered_articles})
-    min_per_source = max(1, top_k // len(sources)) if sources else 1
+    per_source: dict[str, list[dict]] = {s: [] for s in sources}
+    for art in filtered_articles:
+        per_source[art["source_name"]].append(art)
 
-    system_prompt = (
-        "Tu es un système de sélection d'articles.\n"
-        "Tu réponds UNIQUEMENT avec un tableau JSON brut, sans aucun texte avant ou après.\n"
-        "Format STRICT : [{\"index\": 0}, {\"index\": 3}]"
-    )
+    selected = []
+    # Round-robin entre les sources pour garantir la diversité
+    min_per_source = max(1, top_k // len(sources))
+    for s in sources:
+        selected.extend(per_source[s][:min_per_source])
 
-    formatted = ""
-    for i, art in enumerate(filtered_articles):
-        formatted += f"Article {i} [{art['source_name']}]: {art['title']}\n"
+    # Compléter jusqu'à top_k avec les articles restants
+    selected_ids = {id(a) for a in selected}
+    for art in filtered_articles:
+        if len(selected) >= top_k:
+            break
+        if id(art) not in selected_ids:
+            selected.append(art)
+            selected_ids.add(id(art))
 
-    prompt = (
-        f"Sélectionne exactement {top_k} articles parmi cette liste.\n"
-        f"Critères : actualité nationale, internationale, politique.\n"
-        f"Assure-toi d'avoir au moins {min_per_source} article(s) par source : {', '.join(sources)}.\n\n"
-        f"{formatted}"
-    )
-
-    response = call_llm_json(prompt, system_prompt)
-    
-    if not response:
-        return filtered_articles[:top_k]
-
-    indexes = parse_indexes(response, len(filtered_articles))
-    selected = [filtered_articles[i] for i in indexes if 0 <= i < len(filtered_articles)]
-
-    # Compléter si nécessaire (représentation équilibrée)
-    selected_sources = {a["source_name"] for a in selected}
-    for s in set(sources) - selected_sources:
-        candidates = [a for a in filtered_articles if a["source_name"] == s and a not in selected]
-        if candidates: selected.append(candidates[0])
-
+    log.info(f"Articles sélectionnés : {len(selected)}")
     return selected[:top_k]
 
-def fetch_and_rank_news(rss_urls: list[str], max_articles: int = 20):
+def fetch_and_rank_news(rss_urls: list[str], target_news_number: int, max_articles: int = 20):
     all_articles = []
 
     for url in rss_urls:
         feed = feedparser.parse(url)
 
         if not feed.entries:
-            continue  # skip les flux vides plutôt que crash
+            log.warning(f"Flux vide ou invalide : {url}")
+            continue
         
         feed_title = extract_source_name(url)
 
@@ -162,16 +184,25 @@ def fetch_and_rank_news(rss_urls: list[str], max_articles: int = 20):
 
             summary = clean_html(summary)
 
+            # Récupérer la date de publication
+            published = entry.get("published_parsed") or entry.get("updated_parsed")
+            if published:
+                pub_dt = datetime(*published[:6])
+            else:
+                pub_dt = datetime.min  # articles sans date mis en dernier
+
             all_articles.append({
                 "title": title,
                 "summary": summary,
                 "source": url,
-                "source_name": feed_title   # <-- ajout
+                "source_name": feed_title,
+                "published": pub_dt,
             })
     
     if not all_articles:
         raise ValueError("Tous les flux RSS sont vides ou invalides")
 
+    # Dédoublonnage
     seen_titles = set()
     unique_articles = []
     for art in all_articles:
@@ -181,10 +212,12 @@ def fetch_and_rank_news(rss_urls: list[str], max_articles: int = 20):
             unique_articles.append(art)
     all_articles = unique_articles
 
-    random.shuffle(all_articles)
+    # Tri du plus récent au plus ancien (plus de shuffle)
+    all_articles.sort(key=lambda a: a["published"], reverse=True)
+    log.info(f"Article le plus récent : {all_articles[0]['published']} — {all_articles[0]['title']}")
 
-    # 🧠 sélection intelligente TOP 10 par LLM
-    top_articles = select_top_news_llm(all_articles, top_k=10)
+    history, _ = load_history()
+    top_articles = select_top_news(all_articles, top_k=target_news_number, history=history)
 
     return top_articles
 
@@ -580,7 +613,7 @@ def extract_source_name(url: str) -> str:
 
     return "source inconnue"
 
-def anounce_news(rss_url: str):
+def anounce_news(rss_url: str, target_news_number: int):
     system_prompt = (
         "Tu es un présentateur de journal radio expérimenté sur une grande antenne nationale.\n"
         "Ton objectif est de transformer des dépêches brutes en un flash info fluide, vivant et structuré.\n"
@@ -598,6 +631,7 @@ def anounce_news(rss_url: str):
         "- N'INVENTE RIEN. Chaque fait, chiffre, nom propre doit provenir EXACTEMENT du texte fourni.\n"
         "- COPIE les noms propres tels quels depuis les dépêches. N'en déduis ou n'en corriges AUCUN.\n"
         "- INTERDIT : compléter ou corriger un nom propre depuis ta mémoire. Si le texte dit 'pape Léon XIV', tu écris 'pape Léon XIV', jamais 'pape François'.\n"
+        "- INTERDIT : Ne mentionne jamais deux fois la même information, même si elle apparaît dans deux dépêches différentes.\n"
         "- INTERDIT : les formulations 'retour sur', 'rappel de', 'récapitulatif', 'bilan de la semaine'. Le flash info est toujours présenté comme actuel et en direct.\n"
         "- Chaque changement de zone géographique ou de thématique doit être explicitement annoncé par une phrase de transition.\n"
         "- Si tu n'es pas certain d'un nom propre, utilise une formulation générique ('le pape', 'le président', 'le ministre') plutôt que d'inventer.\n"
@@ -613,47 +647,7 @@ def anounce_news(rss_url: str):
     )
     all_articles = []
     urls = rss_url.split()
-    for url in urls:
-        try:
-            feed = feedparser.parse(url)
-            source_name = extract_source_name(url)
-            for entry in feed.entries[:20]:
-                all_articles.append({
-                    "title": entry.get("title", ""),
-                    "summary": clean_html(entry.get("summary", "") or entry.get("description", "")),
-                    "source_name": source_name
-                })
-        except Exception as e:
-            log.warning(f"Erreur sur le flux {url}: {e}")
-
-    if not all_articles:
-        log.error("Aucun article récupéré.")
-        return None
-
-    history = load_history()
-    filtered_articles = []
-
-    for art in all_articles:
-        is_duplicate = False
-        # Comparaison avec les jours précédents
-        for past_title in history:
-            if is_similar(art['title'], past_title):
-                is_duplicate = True
-                break
-        
-        # Comparaison avec les articles déjà retenus dans ce cycle (doublons inter-sources)
-        if not is_duplicate:
-            for accepted in filtered_articles:
-                if is_similar(art['title'], accepted['title']):
-                    is_duplicate = True
-                    break
-        
-        if not is_duplicate:
-            filtered_articles.append(art)
-
-    # 3. Sélection finale par le LLM (Top 10)
-    # On passe les articles filtrés à la fonction de sélection existante
-    selected_articles = select_top_news_llm(filtered_articles, top_k=10)
+    selected_articles = fetch_and_rank_news(urls, int(target_news_number))
 
     if not selected_articles:
         log.warning("Aucune nouvelle information après filtrage.")
@@ -661,38 +655,32 @@ def anounce_news(rss_url: str):
 
     # Mise à jour de l'historique avec les titres sélectionnés
     new_titles = [a['title'] for a in selected_articles]
-    save_history(history + new_titles)
+    save_history(new_titles)
 
     # Construire le contexte avec la source pour chaque article
+    sources_uniques = sorted(list({a.get("source_name") for a in selected_articles}))
+    sources_str = ", ".join(sources_uniques)
+
+    # 2. Construire le contexte pour le LLM
     formatted_news = ""
     for art in selected_articles:
-        source_name = art.get("source_name")
         formatted_news += (
-            f"Source : {source_name}\n"
+            f"SOURCE DE CETTE DÉPÊCHE : {art['source_name']}\n" # Source spécifique à l'article
             f"Titre : {art['title']}\n"
             f"Détails : {art['summary']}\n\n"
         )
 
     prompt = (
         f"Nous sommes le {date}. Il est {hour}\n"
-        "Voici les informations phares du moment :\n\n"
-        f"{formatted_news}"
-        "\n"
-        "RAPPELS STRICTS avant de rédiger :\n"
-        "- Recopie les noms propres EXACTEMENT comme ils apparaissent dans les dépêches ci-dessus.\n"
-        "- N'utilise JAMAIS ta mémoire pour compléter un nom. Ce qui n'est pas dans le texte n'existe pas.\n"
-        "- Si le texte mentionne 'pape Léon XIV', écris 'pape Léon XIV'. Jamais autre chose.\n"
-        "\n"
-        "COMMENCE DIRECTEMENT par la phrase d'accueil radio.\n"
-        "Regroupe les articles par thématiques avec des transitions naturelles.\n"
-        "Pour chaque article : développe avec TOUS les détails présents dans le résumé.\n"
-        "Prévoie environ 30 secondes de temps de parole par information.\n"
-        "Cite toutes les sources journalistiques à la fin.\n"
-        "PAS de numérotation, PAS de titres, PAS de markdown.\n"
+        f"Voici les dépêches à traiter :\n\n{formatted_news}\n"
+        "CONSIGNES DE RÉDACTION :\n"
+        "- Analyse bien le lieu de l'action : si un article parle de la Cour Suprême américaine, ne le place PAS en rubrique 'France'.\n"
+        "- INTERDICTION ABSOLUE de répéter deux fois le même sujet (ex: si deux dépêches parlent des mêmes artistes, fusionne-les ou choisis la meilleure).\n"
+        f"- Termine obligatoirement par cette phrase exacte : 'Ces informations nous ont été présentées par {sources_str}.'"
     )
 
-    content = call_llm(prompt, system_prompt, temperature=0.2, max_tokens=4096)
-
+    content = call_llm(prompt, system_prompt, temperature=0.0, max_tokens=4096)
+    
     if not content:
         log.warning("LLM returned nothing...")
         return None
@@ -803,9 +791,9 @@ if __name__ == "__main__":
             log.info(f"DONE :)")  
 
         case "news":
-            arg_2 = sys.argv[2]
-            rss_url = arg_2
-            content = clean_text(anounce_news(rss_url))
+            rss_url = sys.argv[2]
+            target_news_number = sys.argv[3]
+            content = clean_text(anounce_news(rss_url, target_news_number))
             audio_path = "./news.wav"
             srt_path = "./news.vtt"
             asyncio.run(generate_audio_and_subs(content, VOICE, audio_path, srt_path))
