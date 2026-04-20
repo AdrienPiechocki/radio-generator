@@ -12,6 +12,9 @@ from weather import OpenMeteoClient, WeatherResult
 import feedparser
 from datetime import datetime
 from difflib import SequenceMatcher
+import locale
+
+locale.setlocale(locale.LC_TIME, 'fr_FR.UTF-8')
 
 now = datetime.now()
 date = now.strftime("%A %d %B %Y")
