@@ -12,12 +12,10 @@ from weather import OpenMeteoClient, WeatherResult
 import feedparser
 from datetime import datetime, timedelta
 from difflib import SequenceMatcher
-import locale
-
-locale.setlocale(locale.LC_TIME, 'fr_FR.UTF-8')
+from babel.dates import format_date
 
 now = datetime.now()
-date = now.strftime("%A %d %B %Y")
+date = format_date(now, format='EEEE d MMMM yyyy', locale='fr_FR').capitalize()
 if now.minute >= 30:
     now = now + timedelta(hours=1)
 hour = now.strftime("%Hh")
