@@ -17,7 +17,7 @@ from babel.dates import format_date
 now = datetime.now()
 date = format_date(now, format='EEEE d MMMM yyyy', locale='fr_FR').capitalize()
 hour = now.strftime("%Hh")
-print(hour)
+
 # ---------------------------
 # 🪵 Logging
 # ---------------------------
@@ -815,7 +815,7 @@ if __name__ == "__main__":
             if now.minute >= 30:
                 now = now + timedelta(hours=1)
             hour = now.strftime("%Hh")
-            print(hour)
+            
             content = clean_text(anounce_news(rss_url, target_news_number))
             audio_path = "./news.wav"
             srt_path = "./news.vtt"
