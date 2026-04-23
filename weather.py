@@ -348,9 +348,6 @@ class OpenMeteoClient:
 if __name__ == "__main__":
     client = OpenMeteoClient()
 
-    coords = [(48.85, 2.35)]  # Paris
-    print(client._fetch_batch(coords))
-
     print("Test ville :")
     w = client.get_weather_by_city("Paris", "France")
     print(w.current)
