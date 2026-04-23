@@ -240,53 +240,6 @@ def fetch_and_rank_news(rss_urls: list[str], target_news_number: int, max_articl
 
     return top_articles
 
-def parse_indexes(response: str, nb_articles: int) -> list[int]:
-    """Extrait des indexes valides depuis n'importe quelle structure JSON ou texte."""
-    
-    # Tentative 1 : JSON direct
-    try:
-        data = json.loads(response)
-        
-        # Format : [{"index": 0}, {"index": 1}]
-        if isinstance(data, list) and data and isinstance(data[0], dict):
-            return [item["index"] for item in data if "index" in item]
-        
-        # Format : [0, 1, 2]
-        if isinstance(data, list) and data and isinstance(data[0], int):
-            return data
-        
-        # Format : {"indexes": [0, 1, 2]} ou {"selected": [0, 1]}
-        if isinstance(data, dict):
-            for key in ("indexes", "selected", "indices", "articles"):
-                if key in data and isinstance(data[key], list):
-                    val = data[key]
-                    if val and isinstance(val[0], int):
-                        return val
-                    if val and isinstance(val[0], dict):
-                        return [item.get("index", item.get("id")) for item in val]
-    
-    except json.JSONDecodeError:
-        pass
-
-    # Tentative 2 : extraire un tableau JSON embarqué dans du texte
-    match = re.search(r'\[[\s\S]*?\]', response)
-    if match:
-        try:
-            data = json.loads(match.group())
-            if data and isinstance(data[0], int):
-                return data
-            if data and isinstance(data[0], dict):
-                return [item["index"] for item in data if "index" in item]
-        except Exception:
-            pass
-
-    # Tentative 3 : extraire les numéros de liste ("1. Titre", "2. Titre")
-    nums = re.findall(r'(?:^|\n)\s*(\d+)[\.\)]\s', response)
-    if nums:
-        return [int(n) - 1 for n in nums]  # "1." → index 0
-
-    return []
-
 # ---------------------------
 # 🔧 LLM utilities
 # ---------------------------
@@ -313,30 +266,6 @@ def call_llm(prompt: str, system_prompt: str, temperature: float = 1.0, max_toke
             log.warning(f"Attempt {attempt}/{MAX_RETRIES} failed: {e}")
 
     log.error("All attempts failed.")
-    return None
-
-def call_llm_json(prompt: str, system_prompt: str, temperature: float = 0.1, max_tokens: int = 800) -> Optional[str]:
-    """Variante de call_llm qui force la sortie JSON via Ollama."""
-    for attempt in range(1, MAX_RETRIES + 1):
-        try:
-            response = ollama.chat(
-                model=MODEL,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt}
-                ],
-                format="json",   # <-- contraint le sampler
-                options={
-                    "temperature": temperature,
-                    "num_predict": max_tokens,
-                }
-            )
-            content = response["message"]["content"].strip()
-            if not content:
-                raise ValueError("Empty response")
-            return content
-        except Exception as e:
-            log.warning(f"Attempt {attempt}/{MAX_RETRIES} failed: {e}")
     return None
 
 def clean_text(text: str) -> str:
