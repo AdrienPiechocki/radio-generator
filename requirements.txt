@@ -3,3 +3,6 @@ edge-tts
 requests
 feedparser
 babel
+geopandas
+numpy
+shapely

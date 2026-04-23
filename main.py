@@ -448,158 +448,24 @@ def anounce_weather_tomorrow(weather: WeatherResult):
 
     return call_llm(prompt, system_prompt, temperature=0.2)
 
-def get_france_weather(client):
-    cities = [
-        "Paris", "Lille", "Strasbourg", "Brest",
-        "Lyon", "Clermont-Ferrand",
-        "Toulouse", "Bordeaux",
-        "Marseille", "Nice", "Montpellier"
-    ]
 
-    results = []
-
-    for city in cities:
-        try:
-            weather = client.get_weather_by_city(city, country="France")
-            results.append(weather)
-        except Exception as e:
-            log.warning(f"Erreur météo pour {city}: {e}")
-
-    return results
-
-def anounce_weather_france(weathers: list[WeatherResult]):
+def announce_weather_national(data):
     system_prompt = (
-        "Tu es un présentateur météo radio national.\n"
-        "Tu fais un bulletin météo pour toute la France.\n"
-        "Style fluide, naturel et dynamique.\n"
-        "Pas d'emoji ni de markdown.\n"
-        "Précise la température en °C et les précipitations en ml.\n"
-        "Ne mentionne le vent que s'il est fort (indiqué explicitement dans les données)."
+        f"Tu es un présentateur météo radio. Nous sommes le {date}, il est {hour}.\n"
+        "N'invente rien et base toi uniquement sur ce qui t'es donné en prompt.\n"
+        "Synthétise les données pour ne pas trop te répéter."
     )
-
-    formatted = ""
-    for w in weathers:
-        today = w.forecast[0]
-        conditions = weather_code_to_text(today.weathercode)
-        wind_note = f", vent fort {round(today.wind_speed_max)} km/h" if today.wind_speed_max >= WIND_THRESHOLD_KMH else ""
-        formatted += (
-            f"{w.city} : min {round(today.temp_min)}°C, max {round(today.temp_max)}°C, "
-            f"pluie {today.precipitation_sum} mm, conditions : {conditions}{wind_note}.\n"
-        )
-
-    prompt = (
-        f"Nous sommes le {date}. Il est {hour}\n"
-        "Voici la météo du jour pour chaque ville :\n\n"
-        f"{formatted}\n"
-        "Fais un bulletin météo radio, naturel et fluide."
-    )
-
-    return call_llm(prompt, system_prompt, temperature=0.2)
-
-
-def anounce_weather_france_tomorrow(weathers: list[WeatherResult]):
-    system_prompt = (
-        "Tu es un présentateur météo radio national.\n"
-        "Tu fais les prévisions météo pour demain sur toute la France.\n"
-        "Style fluide, naturel et dynamique.\n"
-        "Pas d'emoji ni de markdown.\n"
-        "Précise la température en °C et les précipitations en ml.\n"
-        "Ne mentionne le vent que s'il est fort (indiqué explicitement dans les données)."
-    )
-
-    formatted = ""
-    for w in weathers:
-        tomorrow = w.forecast[1]
-        conditions = weather_code_to_text(tomorrow.weathercode)
-        wind_note = f", vent fort {round(tomorrow.wind_speed_max)} km/h" if tomorrow.wind_speed_max >= WIND_THRESHOLD_KMH else ""
-        formatted += (
-            f"{w.city} : min {round(tomorrow.temp_min)}°C, max {round(tomorrow.temp_max)}°C, "
-            f"pluie {tomorrow.precipitation_sum} mm"
-            f"{wind_note}, conditions : {conditions}.\n"
-        )
-
-    prompt = (
-        f"Nous sommes le {date}. Il est {hour}\n"
-        "Voici les prévisions météo pour demain, ville par ville :\n\n"
-        f"{formatted}\n"
-        "Fais un bulletin météo radio, naturel et fluide."
-    )
-
-    return call_llm(prompt, system_prompt, temperature=0.2)
-
-def announce_weather_week(weather: WeatherResult):
-    system_prompt = (
-        "Tu es un présentateur météo radio.\n"
-        "Ton rôle est de transformer des données brutes en un bulletin de tendances hebdomadaire (5 jours).\n\n"
-        "DIRECTIVES DE RÉDACTION :\n"
-        "1. ANALYSE GLOBALE : Commence par la tendance générale (ex: 'Une semaine marquée par le retour du soleil' ou 'Une alternance de pluie et d'éclaircies').\n"
-        "2. REGROUPEMENT : Ne fais pas une liste 'Lundi... Mardi... Mercredi...'. Regroupe les jours qui se ressemblent (ex: 'Le début de semaine restera sec, mais une perturbation arrive dès jeudi').\n"
-        "3. CHIFFRES CLÉS : Cite les températures minimales et maximales les plus marquantes.\n"
-        "4. STYLE : Fluide, professionnel, sans aucun markdown (pas de **, ##, tirets) ni emojis.\n"
-        "5. SYNTHÈSE : Le bulletin doit durer environ 45 secondes à l'oral."
-    )
-
-    # Préparation des données textuelles pour le LLM
-    data_points = []
-    for i in range(5):
-        day = weather.forecast[i]
-        d_name = day.date.strftime("%A %d %B")
-        cond = weather_code_to_text(day.weathercode)
-        wind_note = f", vent fort {round(day.wind_speed_max)} km/h" if day.wind_speed_max >= WIND_THRESHOLD_KMH else ""
-        data_points.append(
-            f"{d_name} : {cond}, Températures de {round(day.temp_min)} à {round(day.temp_max)}°C, Pluie : {day.precipitation_sum}mm{wind_note}."
-        )
     
-    forecast_blob = "\n".join(data_points)
-
-    prompt = (
-        f"Nous sommes le {date}. Voici les prévisions détaillées pour {weather.city} sur 5 jours :\n\n"
-        f"{forecast_blob}\n\n"
-        "Rédige maintenant le bulletin radio. Sois précis sur l'évolution du temps. "
-        "N'oublie pas de conclure sur l'ambiance météo de la fin de semaine."
-    )
-
-    return call_llm(prompt, system_prompt, temperature=0.2)
-
-def announce_weather_france_week(weathers: list[WeatherResult]):
-    regions_map = {
-        "Lille": "Nord", "Paris": "Bassin Parisien", "Strasbourg": "Est", 
-        "Lyon": "Centre-Est", "Brest": "Bretagne", "Clermont-Ferrand": "Massif Central",
-        "Bordeaux": "Sud-Ouest", "Toulouse": "Sud-Ouest", 
-        "Marseille": "Sud-Est", "Nice": "Sud-Est", "Montpellier": "Sud-Est"
-    }
-
-    system_prompt = (
-        "Tu es un présentateur météo radio national.\n"
-        "Ton rôle est de transformer des données brutes en un bulletin de tendances hebdomadaire (5 jours).\n\n"
-        "DIRECTIVES DE RÉDACTION :\n"
-        "1. ANALYSE GLOBALE : Commence par la tendance générale (ex: 'Une semaine marquée par le retour du soleil' ou 'Une alternance de pluie et d'éclaircies').\n"
-        "2. REGROUPEMENT : Ne fais pas une liste 'Lundi... Mardi... Mercredi...'. Regroupe les jours qui se ressemblent (ex: 'Le début de semaine restera sec, mais une perturbation arrive dès jeudi').\n"
-        "3. CHIFFRES CLÉS : Cite les températures minimales et maximales les plus marquantes.\n"
-        "4. STYLE : Fluide, professionnel, sans aucun markdown (pas de **, ##, tirets) ni emojis.\n"
-    )
-
-    global_forecast_data = ""
-    for i in range(5):
-        day_date = weathers[0].forecast[i].date.strftime("%A %d %B")
-        day_details = f"--- {day_date} ---\n"
-        # On regroupe les villes par région dans le texte source
-        for region_name in ["Nord", "Bassin Parisien", "Bretagne", "Est", "Centre-Est", "Massif Central", "Sud-Ouest", "Sud-Est"]:
-            cities_in_region = [w for w in weathers if regions_map.get(w.city) == region_name]
-            for w in cities_in_region:
-                day = w.forecast[i]
-                wind_note = f", vent fort {round(day.wind_speed_max)} km/h" if day.wind_speed_max >= WIND_THRESHOLD_KMH else ""
-                day_details += f"[{region_name}] {w.city}: {weather_code_to_text(day.weathercode)}, de {round(day.temp_min)}°C à {round(day.temp_max)}°C, {round(day.precipitation_sum)}mm de précipitation{wind_note}\n"
-        global_forecast_data += day_details + "\n"
-    
-    prompt = (
-        f"DONNÉES BRUTES PAR JOUR :\n{global_forecast_data}\n\n"
-        f"CONSIGNE : Donne le bulletin météo d'aujourd'hui et des 5 prochains jours. "
-        f"Nous sommes le {date}, il est {hour}."
-    )
-
-    # Température très basse (0.1) pour éviter les répétitions et les erreurs
-    return call_llm(prompt, system_prompt, temperature=0.2)
+    context = ""
+    for i, d in enumerate(data):
+        dt = datetime.strptime(d['date'], "%Y-%m-%d")
+        # Format : "Vendredi 24 avril"
+        jour_nom = format_date(dt, format='EEEE d MMMM', locale='fr_FR').capitalize()
+        reg_details = ", ".join([f"{r}: {v['t_max']}°C ({weather_code_to_text(v['weathercode'])}, {v['pluie']}mm de pluie{f", vent fort {v['vent']} km/h" if v["vent"] >= WIND_THRESHOLD_KMH else ""})" for r, v in d['regions'].items()])
+        context += f"{jour_nom} : {reg_details}\n\n"
+    log.info(context)
+    prompt = f"DONNÉES MÉTÉO :\n{context}\n\nRédige le bulletin radio :"
+    return call_llm(prompt, system_prompt, temperature=0.3)
 
 def extract_source_name(url: str) -> str:
     """Extrait un nom de média lisible depuis une URL de flux RSS."""
@@ -744,37 +610,53 @@ if __name__ == "__main__":
             audio_path = "./announce.wav"
             srt_path = "./announce.vtt"
             asyncio.run(generate_audio_and_subs(content, VOICE, audio_path, srt_path))
-            log.info("DONE :)")
-        
+            log.info("Annonce de podcast générée avec succès.")
+
+        case "news":
+            rss_url = sys.argv[2]
+            target_news_number = sys.argv[3]
+            if now.minute >= 20:
+                now = now + timedelta(hours=1)
+            hour = now.strftime("%Hh")
+            
+            content = clean_text(anounce_news(rss_url, target_news_number))
+            audio_path = "./news.wav"
+            srt_path = "./news.vtt"
+            asyncio.run(generate_audio_and_subs(content, VOICE, audio_path, srt_path))
+            log.info("Flash Info généré avec succès.")
+
         case "meteo":
             client = OpenMeteoClient()
-            weathers = get_france_weather(client)
-
-            content = clean_text(anounce_weather_france(weathers))
+            log.info("Analyse de la tendance d'aujourd'hui sur toute la France...")
+            data = client.get_national_today_forecast()
+            
+            content = clean_text(announce_weather_national(data))
             audio_path = "./weather.wav"
             srt_path = "./weather.vtt"
             asyncio.run(generate_audio_and_subs(content, VOICE, audio_path, srt_path))
-            log.info("DONE :)")
+            log.info("Bulletin national généré avec succès.")
 
         case "meteo_demain":
             client = OpenMeteoClient()
-            weathers = get_france_weather(client)
-
-            content = clean_text(anounce_weather_france_tomorrow(weathers))
+            log.info("Analyse de la tendance de demain sur toute la France...")
+            data = client.get_national_tomorrow_forecast()
+            
+            content = clean_text(announce_weather_national(data))
             audio_path = "./weather.wav"
             srt_path = "./weather.vtt"
             asyncio.run(generate_audio_and_subs(content, VOICE, audio_path, srt_path))
-            log.info("DONE :)")
+            log.info("Bulletin national généré avec succès.")
 
         case "meteo_semaine":
             client = OpenMeteoClient()
-            weathers = get_france_weather(client)
-
-            content = clean_text(announce_weather_france_week(weathers))
+            log.info("Analyse de la tendance de la semaine sur toute la France...")
+            data = client.get_national_weekly_forecast()
+            
+            content = clean_text(announce_weather_national(data))
             audio_path = "./weather.wav"
             srt_path = "./weather.vtt"
             asyncio.run(generate_audio_and_subs(content, VOICE, audio_path, srt_path))
-            log.info("DONE :)")
+            log.info("Bulletin national généré avec succès.")
 
         case "meteo_ville":
             arg_2 = sys.argv[2]
@@ -808,20 +690,6 @@ if __name__ == "__main__":
             srt_path = "./weather.vtt"
             asyncio.run(generate_audio_and_subs(content, VOICE, audio_path, srt_path))
             log.info(f"DONE :)")  
-
-        case "news":
-            rss_url = sys.argv[2]
-            target_news_number = sys.argv[3]
-            if now.minute >= 20:
-                now = now + timedelta(hours=1)
-            hour = now.strftime("%Hh")
-            
-            content = clean_text(anounce_news(rss_url, target_news_number))
-            audio_path = "./news.wav"
-            srt_path = "./news.vtt"
-            asyncio.run(generate_audio_and_subs(content, VOICE, audio_path, srt_path))
-            log.info("DONE :)")
-        
         case _:
             pass
 
