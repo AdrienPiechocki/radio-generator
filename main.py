@@ -812,7 +812,7 @@ if __name__ == "__main__":
         case "news":
             rss_url = sys.argv[2]
             target_news_number = sys.argv[3]
-            if now.minute >= 30:
+            if now.minute >= 20:
                 now = now + timedelta(hours=1)
             hour = now.strftime("%Hh")
             
