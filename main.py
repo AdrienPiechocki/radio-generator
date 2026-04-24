@@ -16,6 +16,8 @@ from babel.dates import format_date
 
 now = datetime.now()
 date = format_date(now, format='EEEE d MMMM yyyy', locale='fr_FR').capitalize()
+if now.minute >= 20:
+    now = now + timedelta(hours=1)
 hour = now.strftime("%Hh")
 
 # ---------------------------
@@ -392,7 +394,7 @@ def announce_weather_national(data):
         jour_nom = format_date(dt, format='EEEE d MMMM', locale='fr_FR').capitalize()
         reg_details = ", ".join([f"{r}: {v['t_max']}°C ({weather_code_to_text(v['weathercode'])}, {v['pluie']}mm de pluie{f", vent fort {v['vent']} km/h" if v["vent"] >= WIND_THRESHOLD_KMH else ""})" for r, v in d['regions'].items()])
         context += f"{jour_nom} : {reg_details}\n\n"
-    log.info(context)
+    
     prompt = f"DONNÉES MÉTÉO :\n{context}\n\nRédige le bulletin radio :"
     return call_llm(prompt, system_prompt, temperature=0.3)
 
@@ -544,9 +546,6 @@ if __name__ == "__main__":
         case "news":
             rss_url = sys.argv[2]
             target_news_number = sys.argv[3]
-            if now.minute >= 20:
-                now = now + timedelta(hours=1)
-            hour = now.strftime("%Hh")
             
             content = clean_text(anounce_news(rss_url, target_news_number))
             audio_path = "./news.wav"
@@ -559,7 +558,7 @@ if __name__ == "__main__":
             log.info("Analyse de la tendance d'aujourd'hui sur toute la France...")
             data = client.get_national_today_forecast()
             
-            content = clean_text(announce_weather_national(data))
+            content = clean_text(announce_weather_national([data]))
             audio_path = "./weather.wav"
             srt_path = "./weather.vtt"
             asyncio.run(generate_audio_and_subs(content, VOICE, audio_path, srt_path))
@@ -570,7 +569,7 @@ if __name__ == "__main__":
             log.info("Analyse de la tendance de demain sur toute la France...")
             data = client.get_national_tomorrow_forecast()
             
-            content = clean_text(announce_weather_national(data))
+            content = clean_text(announce_weather_national([data]))
             audio_path = "./weather.wav"
             srt_path = "./weather.vtt"
             asyncio.run(generate_audio_and_subs(content, VOICE, audio_path, srt_path))
