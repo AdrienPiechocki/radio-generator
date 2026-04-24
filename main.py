@@ -439,10 +439,6 @@ def anounce_news(rss_url: str, target_news_number: int):
         "- Commence chaque thématique par une phrase de transition naturelle (ex: 'Sur le plan international...', 'En France maintenant...', 'Du côté de la justice...', 'Dans l'actualité culturelle...', 'Côté économie...').\n"
         "- Entre chaque article d'une même thématique, utilise des connecteurs logiques (ex: 'Toujours à l'international...', 'Dans un autre registre...', 'Par ailleurs...', 'On enchaîne avec...').\n"
         "\n"
-        "CITATIONS DE SOURCES :\n"
-        "- Cite toutes les sources journalistiques à la fin.\n"
-        "- Ne répète jamais la même source deux fois de suite.\n"
-        "\n"
         "RÈGLES ABSOLUES :\n"
         "- N'INVENTE RIEN. Chaque fait, chiffre, nom propre doit provenir EXACTEMENT du texte fourni.\n"
         "- COPIE les noms propres tels quels depuis les dépêches. N'en déduis ou n'en corriges AUCUN.\n"
@@ -491,7 +487,7 @@ def anounce_news(rss_url: str, target_news_number: int):
         f"Voici les dépêches à traiter :\n\n{formatted_news}\n"
         "CONSIGNES DE RÉDACTION :\n"
         "- Analyse bien le lieu de l'action : si un article parle de la Cour Suprême américaine, ne le place PAS en rubrique 'France'.\n"
-        "- INTERDICTION ABSOLUE de répéter deux fois le même sujet (ex: si deux dépêches parlent des mêmes artistes, fusionne-les ou choisis la meilleure).\n"
+        "- INTERDICTION ABSOLUE de répéter deux fois le même sujet (ex: si deux dépêches parlent des mêmes choses, fusionne-les ou choisis la meilleure).\n"
         f"- Termine obligatoirement par cette phrase exacte : 'Ces informations nous ont été présentées par {sources_str}.'"
     )
 
