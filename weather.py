@@ -18,7 +18,8 @@ class CurrentWeather:
     winddirection: int
     weathercode: int
     time: str
-
+    interval: int
+    is_day: bool
 
 @dataclass
 class DailyForecast:
@@ -350,8 +351,5 @@ if __name__ == "__main__":
 
     print("Test ville :")
     w = client.get_weather_by_city("Paris", "France")
-    print(w.current)
+    print(w.forecast)
 
-    print("\nCalcul national...")
-    data = client.get_national_weekly_forecast()
-    print(data)
